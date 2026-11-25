@@ -1,0 +1,14 @@
+# This repo's anfra settings: committed, and free of credentials.
+query:
+  # What a query gets when it sets none of its own.
+  default:
+    input:
+      timezone: Etc/UTC
+      weekStartDay: monday
+    cache:
+      # duration: 10m   # cache each query's result for this long, unless it sets cache.duration
+  # Defaults a query can't change, such as input.weekStartDay.
+  locked_defaults: []
+  cache:
+    enabled: true
+    max_duration: 168h

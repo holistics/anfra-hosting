@@ -1,0 +1,4 @@
+# anfra: data source credentials
+.anfra/data_sources.yml
+# anfra: this machine's own settings
+.anfra/config.local.yml
