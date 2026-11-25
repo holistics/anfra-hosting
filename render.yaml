@@ -1,0 +1,16 @@
+# Render Blueprint for anfra. In Render: New > Blueprint, then pick this repo.
+services:
+  - type: web
+    name: anfra
+    runtime: docker
+    # free sleeps after 15 minutes without visitors. For always-on, use 0.5c-512mb ($7/month).
+    plan: free
+    healthCheckPath: /health
+    autoDeployTrigger: commit
+    envVars:
+      # Who can sign in: name:password pairs, separated by commas.
+      - key: LOGIN_USERS
+        sync: false
+      # The contents of your .anfra/data_sources.yml.
+      - key: ANFRA_DATA_SOURCES
+        sync: false
