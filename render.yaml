@@ -1,16 +1,25 @@
-# Render Blueprint for anfra. In Render: New > Blueprint, then pick this repo.
+# Render Blueprint for anfra. In Render: New > Blueprint, then connect this repo.
 services:
   - type: web
     name: anfra
     runtime: docker
-    # free sleeps after 15 minutes without visitors. For always-on, use 0.5c-512mb ($7/month).
+    # Pick the region closest to your database: oregon, ohio, virginia, frankfurt or singapore.
+    region: oregon
+    # free sleeps when nobody uses it. Pick another instance type in Render to keep it awake.
     plan: free
     healthCheckPath: /health
     autoDeployTrigger: commit
     envVars:
-      # Who can sign in: name:password pairs, separated by commas.
+      # Who can sign in: name:password pairs separated by commas. Render asks for it.
       - key: LOGIN_USERS
         sync: false
-      # The contents of your .anfra/data_sources.yml.
+      # The sample's DuckDB file holds no secrets, so its data source is set here.
+      # For your own database, replace these lines with "sync: false" and push,
+      # then paste your .anfra/data_sources.yml in the service's Environment tab.
       - key: ANFRA_DATA_SOURCES
-        sync: false
+        value: |
+          data_sources:
+            ecommerce_duckdb:
+              type: duckdb
+              connection:
+                path: example-data/ecommerce.duckdb?access_mode=read_only&enable_external_access=false

@@ -13,19 +13,23 @@ PUBLIC_URL="${PUBLIC_URL%/}"
 
 # Database credentials: a secret file, or the ANFRA_DATA_SOURCES env var.
 ds=/repo/.anfra/data_sources.yml
+# A secret file wins over the env var. A project mounted with its own file needs neither.
+cant_write="can't write $ds: the anfra user (uid 1000) needs write access to the project folder"
 if [ -f /etc/secrets/data_sources.yml ]; then
-  cp /etc/secrets/data_sources.yml "$ds"
+  cat /etc/secrets/data_sources.yml > "$ds" 2>/dev/null || fail "$cant_write"
 elif [ -n "${ANFRA_DATA_SOURCES:-}" ]; then
-  printf '%s\n' "$ANFRA_DATA_SOURCES" > "$ds"
+  printf '%s\n' "$ANFRA_DATA_SOURCES" > "$ds" 2>/dev/null || fail "$cant_write"
 fi
 [ -f "$ds" ] || fail "no database credentials: add a secret file named data_sources.yml, or set ANFRA_DATA_SOURCES"
-chmod 600 "$ds"
+chmod 600 "$ds" 2>/dev/null || true
 unset ANFRA_DATA_SOURCES
 
 # Login users: name:password pairs. Plain passwords are hashed here, bcrypt hashes are kept.
 users=""
 IFS=',' read -ra pairs <<< "$LOGIN_USERS"
 for pair in "${pairs[@]}"; do
+  pair="${pair#"${pair%%[![:space:]]*}"}"; pair="${pair%"${pair##*[![:space:]]}"}"
+  [ -n "$pair" ] || continue
   name="${pair%%:*}"; pass="${pair#*:}"
   [ -n "$name" ] && [ "$pass" != "$pair" ] && [ -n "$pass" ] || fail "LOGIN_USERS must look like name:password,name2:password2"
   if [[ "$pass" != \$2* ]]; then
