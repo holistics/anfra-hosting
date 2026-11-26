@@ -1,5 +1,6 @@
 # Fly.io config for anfra. Run `fly launch --no-deploy`, keep this configuration,
-# set LOGIN_USERS with `fly secrets set`, then `fly deploy --ha=false`.
+# set LOGIN_USERS, ANFRA_PROJECT_REPO and, for a private repo, ANFRA_PROJECT_TOKEN
+# with `fly secrets set`, then `fly deploy --ha=false`.
 app = "anfra"
 
 [http_service]

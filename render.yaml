@@ -13,6 +13,13 @@ services:
       # Who can sign in: name:password pairs separated by commas. Render asks for it.
       - key: LOGIN_USERS
         sync: false
+      # Your anfra project's GitHub repo, such as your-org/your-project. Leave it empty to serve
+      # this repo's sample. anfra pulls new commits from it every minute.
+      - key: ANFRA_PROJECT_REPO
+        sync: false
+      # For a private repo: a GitHub token that can read it (fine-grained, Contents: Read-only).
+      - key: ANFRA_PROJECT_TOKEN
+        sync: false
       # Your database credentials: add ANFRA_DATA_SOURCES in the service's Environment tab,
       # with the contents of your .anfra/data_sources.yml. Without it, anfra uses
       # .anfra/data_sources.yml.example, which is enough for this sample's DuckDB file.

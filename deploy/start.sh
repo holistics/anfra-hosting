@@ -48,10 +48,37 @@ if [ -n "$sso" ]; then
 fi
 [ "$login" = off ] || [ -n "${LOGIN_USERS:-}" ] || [ -n "$sso" ] || fail "set LOGIN_USERS, for example alice:a-long-password,agent:another-password"
 
+# The anfra project: your own repo from ANFRA_PROJECT_REPO, cloned here and kept up to date,
+# or else the project in this image (the sample, or a folder mounted at /repo).
+proj=/repo
+git_auth=()
+export GIT_TERMINAL_PROMPT=0
+if [ -n "${ANFRA_PROJECT_REPO:-}" ]; then
+  url="$ANFRA_PROJECT_REPO"
+  # A repo folder mounted from the host belongs to another user. Allow it, as git would refuse.
+  git config --global --add safe.directory '*'
+  [[ "$url" == *://* || "$url" == git@* ]] || url="https://github.com/${url%.git}.git"
+  if [ -n "${ANFRA_PROJECT_TOKEN:-}" ]; then
+    git_auth+=(-c "http.extraHeader=Authorization: Basic $(printf 'x-access-token:%s' "$ANFRA_PROJECT_TOKEN" | base64 | tr -d '\n')")
+  fi
+  unset ANFRA_PROJECT_TOKEN
+  branch=(); [ -z "${ANFRA_PROJECT_BRANCH:-}" ] || branch=(--branch "$ANFRA_PROJECT_BRANCH")
+  rm -rf "$HOME/project"
+  git "${git_auth[@]}" clone -q --depth 1 "${branch[@]}" "$url" "$HOME/project" 2>&1 \
+    | sed 's/^/git: /' >&2 || true
+  [ -d "$HOME/project/.git" ] || fail "can't clone $ANFRA_PROJECT_REPO: check the name, and for a private repo set ANFRA_PROJECT_TOKEN to a token that can read it"
+  git -C "$HOME/project" rev-parse -q --verify HEAD >/dev/null || fail "$ANFRA_PROJECT_REPO has no commits yet: push your project to it first"
+  proj="$HOME/project/${ANFRA_PROJECT_PATH:-}"
+  proj="${proj%/}"
+  [ -d "$proj" ] || fail "ANFRA_PROJECT_PATH: no folder ${ANFRA_PROJECT_PATH:-} in $ANFRA_PROJECT_REPO"
+  echo "start.sh: serving $ANFRA_PROJECT_REPO at $(git -C "$HOME/project" rev-parse --short HEAD)" >&2
+fi
+
 # Database credentials, first found wins: a secret file, the ANFRA_DATA_SOURCES env var,
 # the project's own file (a mounted folder), then the project's credential-free example.
-ds=/repo/.anfra/data_sources.yml
-example=/repo/.anfra/data_sources.yml.example
+mkdir -p "$proj/.anfra" 2>/dev/null || true
+ds="$proj/.anfra/data_sources.yml"
+example="$proj/.anfra/data_sources.yml.example"
 cant_write="can't write $ds: the anfra user (uid 1000) needs write access to the project folder"
 if [ -f /etc/secrets/data_sources.yml ]; then
   cat /etc/secrets/data_sources.yml > "$ds" 2>/dev/null || fail "$cant_write"
@@ -106,8 +133,27 @@ anfra_proxy='reverse_proxy 127.0.0.1:7878 {
   printf '}\n'
 } > "$caddyfile"
 
+cd "$proj"
 ANFRA_HIDE_ERROR_CAUSES=1 ANFRA_SITE_URL="$PUBLIC_URL" \
   anfra serve --addr 127.0.0.1:7878 --no-watch &
+
+# Pull your project's new commits every ANFRA_PROJECT_SYNC_SECONDS (default 60, 0 turns it off).
+# anfra picks up changed files without a restart. Untracked files, such as data_sources.yml, stay.
+sync="${ANFRA_PROJECT_SYNC_SECONDS:-60}"
+if [ -n "${ANFRA_PROJECT_REPO:-}" ] && [ "$sync" != 0 ]; then
+  (
+    while sleep "$sync"; do
+      before=$(git -C "$HOME/project" rev-parse HEAD)
+      if git -C "$HOME/project" "${git_auth[@]}" fetch -q --depth 1 origin "${ANFRA_PROJECT_BRANCH:-HEAD}" 2>/dev/null \
+        && git -C "$HOME/project" reset -q --hard FETCH_HEAD; then
+        after=$(git -C "$HOME/project" rev-parse HEAD)
+        [ "$before" = "$after" ] || warn "updated $ANFRA_PROJECT_REPO to $(git -C "$HOME/project" rev-parse --short HEAD)"
+      else
+        warn "can't pull $ANFRA_PROJECT_REPO, still serving $(git -C "$HOME/project" rev-parse --short HEAD)"
+      fi
+    done
+  ) &
+fi
 
 if [ "$login" = off ]; then
   warn "LOGIN_DISABLED=true, so anyone who can reach port $PORT can use anfra"

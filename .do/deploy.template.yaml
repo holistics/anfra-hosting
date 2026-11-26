@@ -14,6 +14,13 @@ spec:
         - key: LOGIN_USERS
           scope: RUN_TIME
           type: SECRET
+        # Your anfra project's GitHub repo, such as your-org/your-project. Empty serves the sample.
+        - key: ANFRA_PROJECT_REPO
+          scope: RUN_TIME
+        # For a private repo: a GitHub token that can read it.
+        - key: ANFRA_PROJECT_TOKEN
+          scope: RUN_TIME
+          type: SECRET
         - key: PUBLIC_URL
           scope: RUN_TIME
           value: ${APP_URL}

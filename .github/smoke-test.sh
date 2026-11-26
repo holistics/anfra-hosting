@@ -29,7 +29,7 @@ wait_healthy() {
 # Starts a container and prints the last start.sh line, for configurations that must stop.
 start_error() { "$DOCKER" run --rm "$@" "$IMAGE" 2>&1 | grep 'start.sh:' | tail -1; }
 
-cleanup() { "$DOCKER" rm -f anfra-smoke-login anfra-smoke-open anfra-smoke-sso anfra-smoke-url >/dev/null 2>&1; }
+cleanup() { "$DOCKER" rm -f anfra-smoke-login anfra-smoke-open anfra-smoke-sso anfra-smoke-url anfra-smoke-project >/dev/null 2>&1; }
 trap cleanup EXIT
 cleanup
 
@@ -85,6 +85,28 @@ if wait_healthy 18092; then
 else
   fail "/health never answered with Google and GitHub"; "$DOCKER" logs anfra-smoke-sso 2>&1 | tail -20
 fi
+
+echo "Your project from a git repo, kept up to date"
+work=$(mktemp -d)
+git init -q --bare -b main "$work/remote.git"
+git -C "$work" clone -q "$work/remote.git" project 2>/dev/null
+cp -r models datasets apps example-data .anfra "$work/project/"
+rm -f "$work/project/.anfra/data_sources.yml"
+git -C "$work/project" add -A && git -C "$work/project" -c user.email=ci@example.com -c user.name=ci commit -qm "anfra project" && git -C "$work/project" push -q origin main
+chmod -R a+rwX "$work/remote.git"
+"$DOCKER" run -d --name anfra-smoke-project -p 127.0.0.1:18093:8080 -v "$work/remote.git:/srv/project.git:ro,z" \
+  -e PUBLIC_URL="https://$HOST" -e LOGIN_DISABLED=true -e ANFRA_PROJECT_REPO=file:///srv/project.git -e ANFRA_PROJECT_SYNC_SECONDS=3 "$IMAGE" >/dev/null
+if wait_healthy 18093; then
+  check "the project is cloned at start" grep -q 'start.sh: serving file:///srv/project.git' <<< "$("$DOCKER" logs anfra-smoke-project 2>&1)"
+  printf '<!doctype html><title>Pushed later</title>\n' > "$work/project/apps/pushed-later.html"
+  git -C "$work/project" add -A && git -C "$work/project" -c user.email=ci@example.com -c user.name=ci commit -qm "Add an app" && git -C "$work/project" push -q origin main
+  sleep 8
+  check "a new commit is pulled without a restart" "$DOCKER" exec anfra-smoke-project test -f /home/anfra/project/apps/pushed-later.html
+else
+  fail "/health never answered with ANFRA_PROJECT_REPO"; "$DOCKER" logs anfra-smoke-project 2>&1 | tail -20
+fi
+check "an empty project repo" grep -q 'has no commits yet' <<< "$(git init -q --bare "$work/empty.git"; chmod -R a+rwX "$work/empty.git"; start_error -v "$work/empty.git:/srv/empty.git:ro,z" -e PUBLIC_URL=https://x -e LOGIN_DISABLED=true -e ANFRA_PROJECT_REPO=file:///srv/empty.git)"
+check "a repo that can't be read" grep -q "can't clone" <<< "$(start_error -e PUBLIC_URL=https://x -e LOGIN_DISABLED=true -e ANFRA_PROJECT_REPO=holistics/does-not-exist-anfra)"
 
 echo "Addresses the host sets"
 for host_env in FLY_APP_NAME=my-app RAILWAY_PUBLIC_DOMAIN=my-app.up.railway.app; do
