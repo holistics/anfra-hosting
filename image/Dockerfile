@@ -7,7 +7,7 @@ FROM docker.io/library/caddy:2.11.9 AS caddy
 FROM ghcr.io/tinyauthapp/tinyauth:v5.2.0 AS tinyauth
 
 FROM ghcr.io/holistics/anfra:0.24.0
-LABEL org.opencontainers.image.source=https://github.com/holistics/anfra-render-test
+LABEL org.opencontainers.image.source=https://github.com/holistics/anfra-hosting
 LABEL org.opencontainers.image.description="anfra with a login page, ready to self-host"
 USER root
 # git: to serve a project from ANFRA_PROJECT_REPO and keep it up to date.

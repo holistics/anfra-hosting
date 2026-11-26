@@ -38,7 +38,7 @@ The container needs at least 512 MB of memory, one instance (with more, sign-in 
 ### Your own server
 
 ```bash
-git clone https://github.com/holistics/anfra-render-test.git anfra && cd anfra
+git clone https://github.com/holistics/anfra-hosting.git && cd anfra-hosting
 cp .env.example .env                              # fill in the users and your project
 cp ~/path/to/your-project/.anfra/data_sources.yml .   # your database credentials
 docker compose up -d
