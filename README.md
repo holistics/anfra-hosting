@@ -16,7 +16,7 @@ git commit -m "Add Dockerfile"
 git push
 ```
 
-On Heroku, download `heroku.yml` too. Then deploy on your host and set `LOGIN_USERS`.
+On Heroku, download `heroku.yml` too. Then deploy on your host, and set `LOGIN_USERS` to add a login.
 
 ## Settings
 
