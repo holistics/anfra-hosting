@@ -1,6 +1,6 @@
 #!/bin/bash
-# Starts anfra behind a web server (Caddy), with a login page (tinyauth) in front,
-# unless LOGIN_DISABLED=true, when a proxy of your own does the login.
+# Starts anfra behind a web server (Caddy), with a login page (tinyauth) in front
+# when there are users to sign in.
 # If any process stops, the container stops, so the host restarts it.
 set -euo pipefail
 
@@ -19,26 +19,19 @@ elif [ -n "${CONTAINER_APP_NAME:-}" ] && [ -n "${CONTAINER_APP_ENV_DNS_SUFFIX:-}
 fi
 PUBLIC_URL="${PUBLIC_URL:-$host_url}"
 PUBLIC_URL="${PUBLIC_URL%/}"
-[ -n "$PUBLIC_URL" ] || fail "set PUBLIC_URL to the address people open, for example https://data.example.com"
 
-# LOGIN_DISABLED=true skips the login page, for a private network (Tailscale)
-# or a proxy that signs people in (Cloudflare Access).
-login=on
-case "${LOGIN_DISABLED:-}" in
-  true|1|yes) login=off ;;
-  ""|false|0|no) ;;
-  *) fail "LOGIN_DISABLED must be true or false" ;;
-esac
+# With no login settings at all, anfra starts without a login. A setting that is there but
+# wrong stops the container, with a start.sh: line in the logs that says what to fix.
 
-# Sign-in with Google or GitHub, through tinyauth's built-in providers. Without an allow-list,
-# any Google or GitHub account could sign in, so LOGIN_ALLOWED_EMAILS is required with them.
+# Sign-in with Google or GitHub, through tinyauth's built-in providers.
 sso=""
 for p in GOOGLE GITHUB; do
   id_var="LOGIN_${p}_CLIENT_ID"; secret_var="LOGIN_${p}_CLIENT_SECRET"
-  if [ -n "${!id_var:-}" ] || [ -n "${!secret_var:-}" ]; then
-    [ -n "${!id_var:-}" ] && [ -n "${!secret_var:-}" ] || fail "set both $id_var and $secret_var"
+  if [ -n "${!id_var:-}" ] && [ -n "${!secret_var:-}" ]; then
     export "TINYAUTH_OAUTH_PROVIDERS_${p}_CLIENTID=${!id_var}" "TINYAUTH_OAUTH_PROVIDERS_${p}_CLIENTSECRET=${!secret_var}"
     sso="$sso ${p,,}"
+  elif [ -n "${!id_var:-}" ] || [ -n "${!secret_var:-}" ]; then
+    fail "set both $id_var and $secret_var"
   fi
   unset "$id_var" "$secret_var"
 done
@@ -46,10 +39,38 @@ if [ -n "$sso" ]; then
   [ -n "${LOGIN_ALLOWED_EMAILS:-}" ] || fail "set LOGIN_ALLOWED_EMAILS, the emails that can sign in with${sso}, for example maria@example.com,lee@example.com"
   export TINYAUTH_OAUTH_WHITELIST="$LOGIN_ALLOWED_EMAILS"
 fi
-[ "$login" = off ] || [ -n "${LOGIN_USERS:-}" ] || [ -n "$sso" ] || fail "set LOGIN_USERS, for example alice:a-long-password,agent:another-password"
+
+# Login users: name:password pairs. Plain passwords are hashed here, bcrypt hashes are kept.
+users=""
+IFS=',' read -ra pairs <<< "${LOGIN_USERS:-}"
+for pair in "${pairs[@]}"; do
+  pair="${pair#"${pair%%[![:space:]]*}"}"; pair="${pair%"${pair##*[![:space:]]}"}"
+  [ -n "$pair" ] || continue
+  name="${pair%%:*}"; pass="${pair#*:}"
+  [ -n "$name" ] && [ "$pass" != "$pair" ] && [ -n "$pass" ] \
+    || fail "LOGIN_USERS: '${pair%%:*}' has no password. Each user looks like name:password, separated by commas"
+  if [[ "$pass" != \$2* ]]; then
+    pass="$(tinyauth user create --username "$name" --password "$pass" 2>/dev/null | grep -o "$name:\$2[./A-Za-z0-9\$]*" | head -1)"
+    pass="${pass#*:}"
+    [ -n "$pass" ] || fail "LOGIN_USERS: could not hash the password for $name"
+  fi
+  users="${users:+$users,}$name:$pass"
+done
+unset LOGIN_USERS
+
+# The login is on when there are users, or Google or GitHub sign-in, and an address for its cookie.
+login=off
+if [ -n "$users" ] || [ -n "$sso" ]; then
+  host="${PUBLIC_URL#*://}"; host="${host%%[/:]*}"
+  [ -n "$PUBLIC_URL" ] || fail "set PUBLIC_URL to the address people open, for example https://data.example.com. The login needs it."
+  [[ "$host" =~ ^[A-Za-z0-9.-]+\.[A-Za-z]{2,}$ ]] || fail "PUBLIC_URL needs a domain name, such as https://data.example.com, not $PUBLIC_URL"
+  login=on
+else
+  warn "no login: anyone who can reach this address can use anfra. Set LOGIN_USERS to add one."
+fi
 
 # The anfra project: your own repo from ANFRA_PROJECT_REPO, cloned here and kept up to date,
-# or else the project in this image (the sample, or a folder mounted at /repo).
+# or else the project in this image (copied in, or a folder mounted at /repo).
 proj=/repo
 git_auth=()
 export GIT_TERMINAL_PROMPT=0
@@ -68,10 +89,10 @@ if [ -n "${ANFRA_PROJECT_REPO:-}" ]; then
     | sed 's/^/git: /' >&2 || true
   [ -d "$HOME/project/.git" ] || fail "can't clone $ANFRA_PROJECT_REPO: check the name, and for a private repo set ANFRA_PROJECT_TOKEN to a token that can read it"
   git -C "$HOME/project" rev-parse -q --verify HEAD >/dev/null || fail "$ANFRA_PROJECT_REPO has no commits yet: push your project to it first"
+  [ -d "$HOME/project/${ANFRA_PROJECT_PATH:-}" ] || fail "ANFRA_PROJECT_PATH: no folder ${ANFRA_PROJECT_PATH:-} in $ANFRA_PROJECT_REPO"
   proj="$HOME/project/${ANFRA_PROJECT_PATH:-}"
   proj="${proj%/}"
-  [ -d "$proj" ] || fail "ANFRA_PROJECT_PATH: no folder ${ANFRA_PROJECT_PATH:-} in $ANFRA_PROJECT_REPO"
-  echo "start.sh: serving $ANFRA_PROJECT_REPO at $(git -C "$HOME/project" rev-parse --short HEAD)" >&2
+  warn "serving $ANFRA_PROJECT_REPO at $(git -C "$HOME/project" rev-parse --short HEAD)"
 fi
 
 # Database credentials, first found wins: a secret file, the ANFRA_DATA_SOURCES env var,
@@ -88,26 +109,9 @@ elif [ ! -f "$ds" ] && [ -f "$example" ]; then
   warn "no database credentials set, so using .anfra/data_sources.yml.example. Set ANFRA_DATA_SOURCES for your own database."
   cp "$example" "$ds" 2>/dev/null || fail "$cant_write"
 fi
-[ -f "$ds" ] || fail "no database credentials: add a secret file named data_sources.yml, or set ANFRA_DATA_SOURCES"
+[ -f "$ds" ] || warn "no database credentials: queries fail until you add a secret file named data_sources.yml, or set ANFRA_DATA_SOURCES"
 chmod 600 "$ds" 2>/dev/null || true
 unset ANFRA_DATA_SOURCES
-
-# Login users: name:password pairs. Plain passwords are hashed here, bcrypt hashes are kept.
-users=""
-IFS=',' read -ra pairs <<< "${LOGIN_USERS:-}"
-for pair in "${pairs[@]}"; do
-  pair="${pair#"${pair%%[![:space:]]*}"}"; pair="${pair%"${pair##*[![:space:]]}"}"
-  [ -n "$pair" ] || continue
-  name="${pair%%:*}"; pass="${pair#*:}"
-  [ -n "$name" ] && [ "$pass" != "$pair" ] && [ -n "$pass" ] || fail "LOGIN_USERS must look like name:password,name2:password2"
-  if [[ "$pass" != \$2* ]]; then
-    pass="$(tinyauth user create --username "$name" --password "$pass" 2>/dev/null | grep -o "$name:\$2[./A-Za-z0-9\$]*" | head -1)"
-    pass="${pass#*:}"
-    [ -n "$pass" ] || fail "could not hash the password for $name"
-  fi
-  users="${users:+$users,}$name:$pass"
-done
-unset LOGIN_USERS
 
 # The web server's config. The host's proxy ends HTTPS and is the only thing that reaches $PORT.
 # request_buffers: read the whole request before passing it on. Tailscale Serve can cut a
@@ -155,9 +159,7 @@ if [ -n "${ANFRA_PROJECT_REPO:-}" ] && [ "$sync" != 0 ]; then
   ) &
 fi
 
-if [ "$login" = off ]; then
-  warn "LOGIN_DISABLED=true, so anyone who can reach port $PORT can use anfra"
-else
+if [ "$login" = on ]; then
   mkdir -p "$HOME/tinyauth/resources" "$HOME/tinyauth/oidc"
   # The login page's background: anfra's drawing on paper (default) or ink, or your own image URL.
   case "${LOGIN_BACKGROUND:-paper}" in

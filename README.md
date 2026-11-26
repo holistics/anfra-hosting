@@ -20,15 +20,14 @@ On Heroku, download `heroku.yml` too. Then deploy on your host and set `LOGIN_US
 
 ## Settings
 
-The login is on by default. Without `LOGIN_USERS`, Google or GitHub sign-in, or `LOGIN_DISABLED=true`, the container stops and its logs say what to set.
+The login turns on when you set `LOGIN_USERS`, or Google or GitHub sign-in. With neither, anfra starts without a login and warns in its logs. A login setting that is there but wrong stops the container, and its logs say what to fix.
 
 | Env Var | Purpose |
 | --- | --- |
-| `LOGIN_USERS` | Who can sign in, as `name:password` pairs separated by commas |
+| `LOGIN_USERS` | Who can sign in, as `name:password` pairs separated by commas. Leave it out, with no Google or GitHub sign-in, when your own proxy controls access, such as Tailscale or Cloudflare Access. |
 | `ANFRA_DATA_SOURCES` | The contents of your `.anfra/data_sources.yml`. A file mounted at `/etc/secrets/data_sources.yml` wins over it. Without either, anfra uses the project's `.anfra/data_sources.yml.example`. |
 | `PUBLIC_URL` | The address people open. Render, Fly.io, Railway and Azure set it for you. |
 | `LOGIN_GOOGLE_CLIENT_ID`, `LOGIN_GOOGLE_CLIENT_SECRET`, `LOGIN_GITHUB_CLIENT_ID`, `LOGIN_GITHUB_CLIENT_SECRET`, `LOGIN_ALLOWED_EMAILS` | Sign-in with Google or GitHub accounts |
-| `LOGIN_DISABLED` | `true` turns off the login, when your own proxy controls access, such as Tailscale or Cloudflare Access. Anyone who can reach the address can then use anfra. |
 | `LOGIN_TITLE` | The title on the login page. Default: `anfra`. |
 | `LOGIN_BACKGROUND` | The login page's background: `paper` (default), `ink`, or the URL of your own image |
 | `PORT` | The port to listen on. Default: `8080`. |
@@ -49,7 +48,7 @@ See [Authentication](https://anfra.ai/docs/self-host/authentication) for each si
 ## Change the image
 
 1. Edit `image/`.
-2. Check it: `test/smoke-test.sh`, or `DOCKER=podman test/smoke-test.sh`. It builds the image and checks sign-in, a coding agent over MCP, a query, the login turned off, Google and GitHub sign-in, and the error messages.
+2. Check it: `test/smoke-test.sh`, or `DOCKER=podman test/smoke-test.sh`. It builds the image and checks sign-in, a coding agent over MCP, a query, no login when nothing is set, Google and GitHub sign-in, and the error messages.
 3. Publish it, with a GitHub token that has `write:packages`:
 
    ```bash

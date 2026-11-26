@@ -1,6 +1,6 @@
 #!/bin/bash
 # Builds the image and checks it the way a host would run it: the login page, a coding agent
-# over MCP, the login turned off, and start.sh's error messages.
+# over MCP, no login when nothing is set, and a clear message for each wrong setting.
 # Run from the repo root: test/smoke-test.sh (DOCKER=podman to use podman).
 set -uo pipefail
 
@@ -27,10 +27,27 @@ wait_healthy() {
   return 1
 }
 
-# Starts a container and prints the last start.sh line, for configurations that must stop.
-start_error() { "$DOCKER" run --rm "$@" "$IMAGE" 2>&1 | grep 'start.sh:' | tail -1; }
+# Starts a container with a wrong setting: it must stop, with a start.sh: line that says why.
+stops() {
+  local name="$1" pattern="$2"; shift 2
+  local logs
+  logs=$("$DOCKER" run --rm "$@" "$IMAGE" 2>&1 | grep 'start.sh:' | tail -1)
+  if grep -q "$pattern" <<< "$logs"; then pass "$name"; else fail "$name"; echo "  got: $logs"; fi
+}
 
-cleanup() { "$DOCKER" rm -f anfra-smoke-login anfra-smoke-open anfra-smoke-sso anfra-smoke-url anfra-smoke-project >/dev/null 2>&1; }
+# Starts a container: it must keep running, and say this in its logs.
+warns() {
+  local name="$1" pattern="$2"; shift 2
+  "$DOCKER" run -d --name anfra-smoke-warn "$@" "$IMAGE" >/dev/null
+  sleep 8
+  local logs running
+  logs=$("$DOCKER" logs anfra-smoke-warn 2>&1)
+  running=$("$DOCKER" inspect -f '{{.State.Running}}' anfra-smoke-warn 2>/dev/null)
+  "$DOCKER" rm -f anfra-smoke-warn >/dev/null 2>&1
+  if [ "$running" = true ] && grep -q "$pattern" <<< "$logs"; then pass "$name"; else fail "$name"; echo "$logs" | grep 'start.sh' | tail -3; fi
+}
+
+cleanup() { "$DOCKER" rm -f anfra-smoke-login anfra-smoke-open anfra-smoke-sso anfra-smoke-url anfra-smoke-project anfra-smoke-warn >/dev/null 2>&1; }
 trap cleanup EXIT
 cleanup
 
@@ -64,14 +81,14 @@ else
   fail "/health never answered"; "$DOCKER" logs anfra-smoke-login 2>&1 | tail -20
 fi
 
-echo "LOGIN_DISABLED=true, behind your own proxy"
+echo "No users: no login, for your own proxy"
 "$DOCKER" run -d --name anfra-smoke-open -p 127.0.0.1:18091:8080 \
-  -e PUBLIC_URL="https://$HOST" -e LOGIN_DISABLED=true "$IMAGE" >/dev/null
+  -e PUBLIC_URL="https://$HOST" "$IMAGE" >/dev/null
 if wait_healthy 18091; then
   check "the app opens without a login" [ "$(req -o /dev/null -w '%{http_code}' http://127.0.0.1:18091/)" = 200 ]
   check "MCP initialize without a password" grep -q '"serverInfo"' <<< "$(req -X POST "${mcp_headers[@]}" -d "$mcp_init" http://127.0.0.1:18091/mcp)"
 else
-  fail "/health never answered with LOGIN_DISABLED"; "$DOCKER" logs anfra-smoke-open 2>&1 | tail -20
+  fail "/health never answered without users"; "$DOCKER" logs anfra-smoke-open 2>&1 | tail -20
 fi
 
 echo "Google and GitHub sign-in"
@@ -98,7 +115,7 @@ rm -f "$work/project/.anfra/data_sources.yml"
 git -C "$work/project" add -A && git -C "$work/project" -c user.email=ci@example.com -c user.name=ci commit -qm "anfra project" && git -C "$work/project" push -q origin main
 chmod -R a+rwX "$work/remote.git"
 "$DOCKER" run -d --name anfra-smoke-project -p 127.0.0.1:18093:8080 -v "$work/remote.git:/srv/project.git:ro,z" \
-  -e PUBLIC_URL="https://$HOST" -e LOGIN_DISABLED=true -e ANFRA_PROJECT_REPO=file:///srv/project.git -e ANFRA_PROJECT_SYNC_SECONDS=3 "$IMAGE" >/dev/null
+  -e PUBLIC_URL="https://$HOST" -e ANFRA_PROJECT_REPO=file:///srv/project.git -e ANFRA_PROJECT_SYNC_SECONDS=3 "$IMAGE" >/dev/null
 if wait_healthy 18093; then
   check "the project is cloned at start" grep -q 'start.sh: serving file:///srv/project.git' <<< "$("$DOCKER" logs anfra-smoke-project 2>&1)"
   printf '<!doctype html><title>Pushed later</title>\n' > "$work/project/apps/pushed-later.html"
@@ -108,24 +125,28 @@ if wait_healthy 18093; then
 else
   fail "/health never answered with ANFRA_PROJECT_REPO"; "$DOCKER" logs anfra-smoke-project 2>&1 | tail -20
 fi
-check "an empty project repo" grep -q 'has no commits yet' <<< "$(git init -q --bare "$work/empty.git"; chmod -R a+rwX "$work/empty.git"; start_error -v "$work/empty.git:/srv/empty.git:ro,z" -e PUBLIC_URL=https://x -e LOGIN_DISABLED=true -e ANFRA_PROJECT_REPO=file:///srv/empty.git)"
-check "a repo that can't be read" grep -q "can't clone" <<< "$(start_error -e PUBLIC_URL=https://x -e LOGIN_DISABLED=true -e ANFRA_PROJECT_REPO=holistics/does-not-exist-anfra)"
+git init -q --bare "$work/empty.git"; chmod -R a+rwX "$work/empty.git"
 
 echo "Addresses the host sets"
 for host_env in FLY_APP_NAME=my-app RAILWAY_PUBLIC_DOMAIN=my-app.up.railway.app; do
-  "$DOCKER" run -d --name anfra-smoke-url -e "$host_env" -e LOGIN_DISABLED=true "$IMAGE" >/dev/null
+  "$DOCKER" run -d --name anfra-smoke-url -e "$host_env" -e LOGIN_USERS=agent:pw "$IMAGE" >/dev/null
   sleep 5
   check "${host_env%%=*} fills PUBLIC_URL" [ "$("$DOCKER" inspect -f '{{.State.Running}}' anfra-smoke-url 2>/dev/null)" = true ]
   "$DOCKER" rm -f anfra-smoke-url >/dev/null 2>&1
 done
 
-echo "start.sh messages"
-check "no PUBLIC_URL" grep -q 'set PUBLIC_URL' <<< "$(start_error -e LOGIN_USERS=a:b)"
-check "no LOGIN_USERS" grep -q 'set LOGIN_USERS' <<< "$(start_error -e PUBLIC_URL=https://x)"
-check "a pair without a password" grep -q 'must look like name:password' <<< "$(start_error -e PUBLIC_URL=https://x -e LOGIN_USERS=maria)"
-check "a bad LOGIN_DISABLED" grep -q 'LOGIN_DISABLED must be true or false' <<< "$(start_error -e PUBLIC_URL=https://x -e LOGIN_DISABLED=maybe)"
-check "GitHub without an allow-list" grep -q 'set LOGIN_ALLOWED_EMAILS' <<< "$(start_error -e PUBLIC_URL=https://x -e LOGIN_GITHUB_CLIENT_ID=a -e LOGIN_GITHUB_CLIENT_SECRET=b)"
-check "half a Google app" grep -q 'set both LOGIN_GOOGLE_CLIENT_ID' <<< "$(start_error -e PUBLIC_URL=https://x -e LOGIN_GOOGLE_CLIENT_ID=a)"
+echo "Nothing set: anfra starts without a login"
+warns "no users" 'no login' -e PUBLIC_URL="https://$HOST"
+warns "no PUBLIC_URL and no users" 'no login'
+
+echo "A wrong setting stops anfra, and says what to fix"
+stops "users but no PUBLIC_URL" 'set PUBLIC_URL' -e LOGIN_USERS=a:b
+stops "a PUBLIC_URL without a domain" 'needs a domain name' -e PUBLIC_URL=http://localhost:8080 -e LOGIN_USERS=a:b
+stops "a user without a password" "'maria' has no password" -e PUBLIC_URL="https://$HOST" -e LOGIN_USERS=maria,agent:pw
+stops "GitHub without an allow-list" 'set LOGIN_ALLOWED_EMAILS' -e PUBLIC_URL="https://$HOST" -e LOGIN_GITHUB_CLIENT_ID=a -e LOGIN_GITHUB_CLIENT_SECRET=b
+stops "half a Google app" 'set both LOGIN_GOOGLE_CLIENT_ID' -e PUBLIC_URL="https://$HOST" -e LOGIN_GOOGLE_CLIENT_ID=a
+stops "an empty project repo" 'has no commits yet' -v "$work/empty.git:/srv/empty.git:ro,z" -e PUBLIC_URL="https://$HOST" -e ANFRA_PROJECT_REPO=file:///srv/empty.git
+stops "a repo that can't be read" "can't clone" -e PUBLIC_URL="https://$HOST" -e ANFRA_PROJECT_REPO=holistics/does-not-exist-anfra
 
 echo
 [ "$failures" = 0 ] && echo "All checks passed" || { echo "$failures check(s) failed"; exit 1; }
