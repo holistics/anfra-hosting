@@ -1,5 +1,0 @@
-# What anfra ingest reads into the local catalog that anfra search searches.
-sources:
-  - name: aml
-    type: aml
-    path: ..
