@@ -4,3 +4,4 @@
 .anfra/config.local.yml
 .env
 data_sources.yml
+image

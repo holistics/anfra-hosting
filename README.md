@@ -75,7 +75,8 @@ See [Authentication](https://anfra.ai/docs/self-host/authentication) for each si
 
 | Path | What it is |
 | --- | --- |
-| `Dockerfile`, `deploy/start.sh` | anfra with a login page ([tinyauth](https://tinyauth.app)) and a web server ([Caddy](https://caddyserver.com)) in one container. It clones your project and keeps it up to date. |
+| `image/` | The source of `ghcr.io/holistics/anfra-hosting`: anfra with a login page ([tinyauth](https://tinyauth.app)) and a web server ([Caddy](https://caddyserver.com)) in one container. |
+| `Dockerfile` | The 2 lines a project needs: the image, plus the project copied in. |
 | `render.yaml`, `fly.toml`, `heroku.yml`, `.do/deploy.template.yaml` | Config for hosts that read it from the repo |
 | `compose.yaml`, `.env.example` | Your own server, with Docker Compose |
 | `models/`, `datasets/`, `apps/`, `example-data/` | The sample project, served when `ANFRA_PROJECT_REPO` is empty |

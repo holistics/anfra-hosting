@@ -6,6 +6,7 @@ set -uo pipefail
 
 DOCKER="${DOCKER:-docker}"
 IMAGE=anfra-smoke-test
+BASE=ghcr.io/holistics/anfra-hosting:0.24.0
 HOST=anfra.test
 failures=0
 
@@ -34,7 +35,8 @@ trap cleanup EXIT
 cleanup
 
 echo "Building the image"
-"$DOCKER" build -q -t "$IMAGE" . >/dev/null || { echo "FAIL build"; exit 1; }
+"$DOCKER" build -q -t "$BASE" image >/dev/null || { echo "FAIL build of the image"; exit 1; }
+"$DOCKER" build -q -t "$IMAGE" . >/dev/null || { echo "FAIL build of the sample on top"; exit 1; }
 
 echo "Built-in login, sample data source from .anfra/data_sources.yml.example"
 "$DOCKER" run -d --name anfra-smoke-login -p 127.0.0.1:18090:8080 \
@@ -79,7 +81,8 @@ echo "Google and GitHub sign-in"
   -e LOGIN_GOOGLE_CLIENT_ID=id -e LOGIN_GOOGLE_CLIENT_SECRET=secret \
   -e LOGIN_ALLOWED_EMAILS=maria@example.com "$IMAGE" >/dev/null
 if wait_healthy 18092; then
-  context=$(req http://127.0.0.1:18092/api/context/app)
+  # /health answers before the login page has started, so wait for it too.
+  for _ in $(seq 1 20); do context=$(req http://127.0.0.1:18092/api/context/app); grep -q providers <<< "$context" && break; sleep 1; done
   check "the login page offers GitHub and Google" grep -q '"id":"github".*"id":"google"' <<< "$context"
   check "GitHub calls back to PUBLIC_URL" grep -q "redirect_uri=https%3A%2F%2F$HOST%2Fapi%2Foauth%2Fcallback%2Fgithub" <<< "$(req http://127.0.0.1:18092/api/oauth/url/github)"
 else
