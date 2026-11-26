@@ -1,10 +1,4 @@
-# anfra: data source credentials
-.anfra/data_sources.yml
-# anfra: this machine's own settings
-.anfra/config.local.yml
-
-# Docker Compose settings: users and passwords
+# anfra: database credentials and this machine's own settings, anywhere in the repo
+data_sources.yml
+config.local.yml
 .env
-
-# Docker Compose: your database credentials
-/data_sources.yml

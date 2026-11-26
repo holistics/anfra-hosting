@@ -1,7 +1,7 @@
 #!/bin/bash
 # Builds the image and checks it the way a host would run it: the login page, a coding agent
 # over MCP, the login turned off, and start.sh's error messages.
-# Run from the repo root: .github/smoke-test.sh (DOCKER=podman to use podman).
+# Run from the repo root: test/smoke-test.sh (DOCKER=podman to use podman).
 set -uo pipefail
 
 DOCKER="${DOCKER:-docker}"
@@ -36,7 +36,7 @@ cleanup
 
 echo "Building the image"
 "$DOCKER" build -q -t "$BASE" image >/dev/null || { echo "FAIL build of the image"; exit 1; }
-"$DOCKER" build -q -t "$IMAGE" . >/dev/null || { echo "FAIL build of the sample on top"; exit 1; }
+"$DOCKER" build -q -t "$IMAGE" -f Dockerfile test/sample >/dev/null || { echo "FAIL build of the sample on top"; exit 1; }
 
 echo "Built-in login, sample data source from .anfra/data_sources.yml.example"
 "$DOCKER" run -d --name anfra-smoke-login -p 127.0.0.1:18090:8080 \
@@ -93,7 +93,7 @@ echo "Your project from a git repo, kept up to date"
 work=$(mktemp -d)
 git init -q --bare -b main "$work/remote.git"
 git -C "$work" clone -q "$work/remote.git" project 2>/dev/null
-cp -r models datasets apps example-data .anfra "$work/project/"
+cp -r test/sample/. "$work/project/"
 rm -f "$work/project/.anfra/data_sources.yml"
 git -C "$work/project" add -A && git -C "$work/project" -c user.email=ci@example.com -c user.name=ci commit -qm "anfra project" && git -C "$work/project" push -q origin main
 chmod -R a+rwX "$work/remote.git"
