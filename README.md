@@ -68,6 +68,7 @@ The token stays in your host's settings. The container sends it to GitHub and ne
 | `LOGIN_DISABLED` | `true` turns off the login page, when your own proxy signs people in, such as Tailscale or Cloudflare Access |
 | `PORT` | The port to listen on. Default: `8080`. |
 | `LOGIN_TITLE` | The title on the login page. Default: `anfra`. |
+| `LOGIN_BACKGROUND` | The login page's background: `paper` (default), `ink`, or the URL of your own image |
 
 See [Authentication](https://anfra.ai/docs/self-host/authentication) for each sign-in option.
 

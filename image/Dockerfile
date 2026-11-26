@@ -17,5 +17,6 @@ USER anfra
 COPY --from=caddy /usr/bin/caddy /usr/local/bin/caddy
 COPY --from=tinyauth /tinyauth/tinyauth /usr/local/bin/tinyauth
 COPY --chmod=755 start.sh /usr/local/share/anfra-hosting/start.sh
+COPY --chmod=644 background-paper.svg background-ink.svg /usr/local/share/anfra-hosting/
 EXPOSE 8080
 ENTRYPOINT ["/usr/bin/tini", "-g", "--", "/usr/local/share/anfra-hosting/start.sh"]

@@ -159,6 +159,13 @@ if [ "$login" = off ]; then
   warn "LOGIN_DISABLED=true, so anyone who can reach port $PORT can use anfra"
 else
   mkdir -p "$HOME/tinyauth/resources" "$HOME/tinyauth/oidc"
+  # The login page's background: anfra's drawing on paper (default) or ink, or your own image URL.
+  case "${LOGIN_BACKGROUND:-paper}" in
+    paper|ink)
+      cp "/usr/local/share/anfra-hosting/background-${LOGIN_BACKGROUND:-paper}.svg" "$HOME/tinyauth/resources/background.svg"
+      background=/resources/background.svg ;;
+    *) background="$LOGIN_BACKGROUND" ;;
+  esac
   TINYAUTH_APPURL="$PUBLIC_URL" \
   TINYAUTH_AUTH_USERS="$users" \
   TINYAUTH_AUTH_SUBDOMAINSENABLED=false \
@@ -170,6 +177,7 @@ else
   TINYAUTH_OIDC_PRIVATEKEYPATH="$HOME/tinyauth/oidc/key.pem" \
   TINYAUTH_OIDC_PUBLICKEYPATH="$HOME/tinyauth/oidc/key.pub" \
   TINYAUTH_UI_TITLE="${LOGIN_TITLE:-anfra}" \
+  TINYAUTH_UI_BACKGROUNDIMAGE="$background" \
   TINYAUTH_UI_FORGOTPASSWORDMESSAGE="Ask the person who set up this anfra to reset your password." \
     tinyauth &
 fi
