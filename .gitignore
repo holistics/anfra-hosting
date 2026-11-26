@@ -5,3 +5,6 @@
 
 # Docker Compose settings: users and passwords
 .env
+
+# Docker Compose: your database credentials
+/data_sources.yml
