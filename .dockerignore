@@ -1,7 +1,4 @@
 .git
-.github
+.env
 .anfra/data_sources.yml
 .anfra/config.local.yml
-.env
-data_sources.yml
-image
