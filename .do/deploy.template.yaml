@@ -1,0 +1,19 @@
+# DigitalOcean App Platform template for anfra, used by the Deploy to DigitalOcean button.
+spec:
+  name: anfra
+  services:
+    - name: anfra
+      dockerfile_path: Dockerfile
+      http_port: 8080
+      instance_count: 1
+      instance_size_slug: apps-s-1vcpu-0.5gb
+      health_check:
+        http_path: /health
+      envs:
+        # Who can sign in: name:password pairs separated by commas.
+        - key: LOGIN_USERS
+          scope: RUN_TIME
+          type: SECRET
+        - key: PUBLIC_URL
+          scope: RUN_TIME
+          value: ${APP_URL}

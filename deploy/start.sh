@@ -1,24 +1,65 @@
 #!/bin/bash
-# Starts anfra, the login page (tinyauth) and the web server (Caddy).
-# If any of them stops, the container stops, so the platform restarts it.
+# Starts anfra behind a web server (Caddy), with a login page (tinyauth) in front,
+# unless LOGIN_DISABLED=true, when a proxy of your own does the login.
+# If any process stops, the container stops, so the host restarts it.
 set -euo pipefail
 
 fail() { echo "start.sh: $*" >&2; exit 1; }
+warn() { echo "start.sh: $*" >&2; }
 
 export PORT="${PORT:-8080}"
-PUBLIC_URL="${PUBLIC_URL:-${RENDER_EXTERNAL_URL:-}}"
+
+# The address people open. Some hosts tell the container: Render, Fly.io, Railway, Azure Container Apps.
+host_url=""
+if [ -n "${RENDER_EXTERNAL_URL:-}" ]; then host_url="$RENDER_EXTERNAL_URL"
+elif [ -n "${FLY_APP_NAME:-}" ]; then host_url="https://$FLY_APP_NAME.fly.dev"
+elif [ -n "${RAILWAY_PUBLIC_DOMAIN:-}" ]; then host_url="https://$RAILWAY_PUBLIC_DOMAIN"
+elif [ -n "${CONTAINER_APP_NAME:-}" ] && [ -n "${CONTAINER_APP_ENV_DNS_SUFFIX:-}" ]; then
+  host_url="https://$CONTAINER_APP_NAME.$CONTAINER_APP_ENV_DNS_SUFFIX"
+fi
+PUBLIC_URL="${PUBLIC_URL:-$host_url}"
 PUBLIC_URL="${PUBLIC_URL%/}"
 [ -n "$PUBLIC_URL" ] || fail "set PUBLIC_URL to the address people open, for example https://data.example.com"
-[ -n "${LOGIN_USERS:-}" ] || fail "set LOGIN_USERS, for example alice:a-long-password,agent:another-password"
 
-# Database credentials: a secret file, or the ANFRA_DATA_SOURCES env var.
+# LOGIN_DISABLED=true skips the login page, for a private network (Tailscale)
+# or a proxy that signs people in (Cloudflare Access).
+login=on
+case "${LOGIN_DISABLED:-}" in
+  true|1|yes) login=off ;;
+  ""|false|0|no) ;;
+  *) fail "LOGIN_DISABLED must be true or false" ;;
+esac
+
+# Sign-in with Google or GitHub, through tinyauth's built-in providers. Without an allow-list,
+# any Google or GitHub account could sign in, so LOGIN_ALLOWED_EMAILS is required with them.
+sso=""
+for p in GOOGLE GITHUB; do
+  id_var="LOGIN_${p}_CLIENT_ID"; secret_var="LOGIN_${p}_CLIENT_SECRET"
+  if [ -n "${!id_var:-}" ] || [ -n "${!secret_var:-}" ]; then
+    [ -n "${!id_var:-}" ] && [ -n "${!secret_var:-}" ] || fail "set both $id_var and $secret_var"
+    export "TINYAUTH_OAUTH_PROVIDERS_${p}_CLIENTID=${!id_var}" "TINYAUTH_OAUTH_PROVIDERS_${p}_CLIENTSECRET=${!secret_var}"
+    sso="$sso ${p,,}"
+  fi
+  unset "$id_var" "$secret_var"
+done
+if [ -n "$sso" ]; then
+  [ -n "${LOGIN_ALLOWED_EMAILS:-}" ] || fail "set LOGIN_ALLOWED_EMAILS, the emails that can sign in with${sso}, for example maria@example.com,lee@example.com"
+  export TINYAUTH_OAUTH_WHITELIST="$LOGIN_ALLOWED_EMAILS"
+fi
+[ "$login" = off ] || [ -n "${LOGIN_USERS:-}" ] || [ -n "$sso" ] || fail "set LOGIN_USERS, for example alice:a-long-password,agent:another-password"
+
+# Database credentials, first found wins: a secret file, the ANFRA_DATA_SOURCES env var,
+# the project's own file (a mounted folder), then the project's credential-free example.
 ds=/repo/.anfra/data_sources.yml
-# A secret file wins over the env var. A project mounted with its own file needs neither.
+example=/repo/.anfra/data_sources.yml.example
 cant_write="can't write $ds: the anfra user (uid 1000) needs write access to the project folder"
 if [ -f /etc/secrets/data_sources.yml ]; then
   cat /etc/secrets/data_sources.yml > "$ds" 2>/dev/null || fail "$cant_write"
 elif [ -n "${ANFRA_DATA_SOURCES:-}" ]; then
   printf '%s\n' "$ANFRA_DATA_SOURCES" > "$ds" 2>/dev/null || fail "$cant_write"
+elif [ ! -f "$ds" ] && [ -f "$example" ]; then
+  warn "no database credentials set, so using .anfra/data_sources.yml.example. Set ANFRA_DATA_SOURCES for your own database."
+  cp "$example" "$ds" 2>/dev/null || fail "$cant_write"
 fi
 [ -f "$ds" ] || fail "no database credentials: add a secret file named data_sources.yml, or set ANFRA_DATA_SOURCES"
 chmod 600 "$ds" 2>/dev/null || true
@@ -26,7 +67,7 @@ unset ANFRA_DATA_SOURCES
 
 # Login users: name:password pairs. Plain passwords are hashed here, bcrypt hashes are kept.
 users=""
-IFS=',' read -ra pairs <<< "$LOGIN_USERS"
+IFS=',' read -ra pairs <<< "${LOGIN_USERS:-}"
 for pair in "${pairs[@]}"; do
   pair="${pair#"${pair%%[![:space:]]*}"}"; pair="${pair%"${pair##*[![:space:]]}"}"
   [ -n "$pair" ] || continue
@@ -41,26 +82,53 @@ for pair in "${pairs[@]}"; do
 done
 unset LOGIN_USERS
 
-mkdir -p "$HOME/tinyauth/resources" "$HOME/tinyauth/oidc"
+# The web server's config. The host's proxy ends HTTPS and is the only thing that reaches $PORT.
+# request_buffers: read the whole request before passing it on. Tailscale Serve can cut a
+# streamed answer otherwise (tailscale/tailscale#21894), and MCP streams its answers.
+caddyfile="$HOME/caddy/Caddyfile"
+mkdir -p "$HOME/caddy"
+anfra_proxy='reverse_proxy 127.0.0.1:7878 {
+		header_up Host {upstream_hostport}
+		request_buffers 4MB
+	}'
+{
+  printf '{\n\tadmin off\n\tauto_https off\n\tservers {\n\t\ttrusted_proxies static 0.0.0.0/0 ::/0\n\t}\n}\n\n:{$PORT} {\n'
+  if [ "$login" = off ]; then
+    printf '\t%s\n' "$anfra_proxy"
+  else
+    # /health without a login, it shows only anfra's status and version. The login page and
+    # its API (tinyauth v5.2.0 routes). Everything else is checked by tinyauth first.
+    printf '\t@health path /health\n\thandle @health {\n\t\t%s\n\t}\n' "${anfra_proxy//$'\n'/$'\n\t'}"
+    printf '\t@login path /login /logout /continue /totp /forgot-password /unauthorized /error /oidc/authorize /authorize /assets/* /resources/* /api/user/* /api/context/* /api/oauth/* /api/oidc/* /favicon* /apple-touch-icon.png /site.webmanifest /web-app-manifest-* /background.webp\n'
+    printf '\thandle @login {\n\t\treverse_proxy 127.0.0.1:3000\n\t}\n'
+    printf '\thandle {\n\t\tforward_auth 127.0.0.1:3000 {\n\t\t\turi /api/auth/caddy\n\t\t}\n\t\t%s\n\t}\n' "${anfra_proxy//$'\n'/$'\n\t'}"
+  fi
+  printf '}\n'
+} > "$caddyfile"
 
 ANFRA_HIDE_ERROR_CAUSES=1 ANFRA_SITE_URL="$PUBLIC_URL" \
   anfra serve --addr 127.0.0.1:7878 --no-watch &
 
-TINYAUTH_APPURL="$PUBLIC_URL" \
-TINYAUTH_AUTH_USERS="$users" \
-TINYAUTH_AUTH_SUBDOMAINSENABLED=false \
-TINYAUTH_AUTH_SECURECOOKIE=true \
-TINYAUTH_SERVER_ADDRESS=127.0.0.1 \
-TINYAUTH_SERVER_PORT=3000 \
-TINYAUTH_DATABASE_PATH="$HOME/tinyauth/tinyauth.db" \
-TINYAUTH_RESOURCES_PATH="$HOME/tinyauth/resources" \
-TINYAUTH_OIDC_PRIVATEKEYPATH="$HOME/tinyauth/oidc/key.pem" \
-TINYAUTH_OIDC_PUBLICKEYPATH="$HOME/tinyauth/oidc/key.pub" \
-TINYAUTH_UI_TITLE="${LOGIN_TITLE:-anfra}" \
-TINYAUTH_UI_FORGOTPASSWORDMESSAGE="Ask the person who set up this anfra to reset your password." \
-  tinyauth &
+if [ "$login" = off ]; then
+  warn "LOGIN_DISABLED=true, so anyone who can reach port $PORT can use anfra"
+else
+  mkdir -p "$HOME/tinyauth/resources" "$HOME/tinyauth/oidc"
+  TINYAUTH_APPURL="$PUBLIC_URL" \
+  TINYAUTH_AUTH_USERS="$users" \
+  TINYAUTH_AUTH_SUBDOMAINSENABLED=false \
+  TINYAUTH_AUTH_SECURECOOKIE=true \
+  TINYAUTH_SERVER_ADDRESS=127.0.0.1 \
+  TINYAUTH_SERVER_PORT=3000 \
+  TINYAUTH_DATABASE_PATH="$HOME/tinyauth/tinyauth.db" \
+  TINYAUTH_RESOURCES_PATH="$HOME/tinyauth/resources" \
+  TINYAUTH_OIDC_PRIVATEKEYPATH="$HOME/tinyauth/oidc/key.pem" \
+  TINYAUTH_OIDC_PUBLICKEYPATH="$HOME/tinyauth/oidc/key.pub" \
+  TINYAUTH_UI_TITLE="${LOGIN_TITLE:-anfra}" \
+  TINYAUTH_UI_FORGOTPASSWORDMESSAGE="Ask the person who set up this anfra to reset your password." \
+    tinyauth &
+fi
 
-caddy run --config /repo/deploy/Caddyfile --adapter caddyfile &
+caddy run --config "$caddyfile" --adapter caddyfile &
 
 wait -n
 fail "a process stopped, so the container stops too"

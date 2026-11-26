@@ -1,3 +1,5 @@
 .git
+.github
 .anfra/data_sources.yml
 .anfra/config.local.yml
+.env

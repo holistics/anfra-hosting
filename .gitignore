@@ -2,3 +2,6 @@
 .anfra/data_sources.yml
 # anfra: this machine's own settings
 .anfra/config.local.yml
+
+# Docker Compose settings: users and passwords
+.env

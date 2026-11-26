@@ -1,0 +1,5 @@
+# Heroku config for anfra: run `heroku stack:set container`, set LOGIN_USERS and PUBLIC_URL
+# with `heroku config:set`, then `git push heroku main`.
+build:
+  docker:
+    web: Dockerfile
