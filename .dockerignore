@@ -2,3 +2,5 @@
 .env
 .anfra/data_sources.yml
 .anfra/config.local.yml
+# A secret file some hosts put in the build folder, such as Render's
+data_sources.yml
