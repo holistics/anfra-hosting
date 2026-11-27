@@ -32,16 +32,23 @@ jobs:
           new=${new#v}
           old=$(sed -n 's|^FROM ghcr.io/holistics/anfra:||p' image/Dockerfile)
           echo "anfra's latest release is $new, anfra-hosting is on $old"
-          if docker manifest inspect "ghcr.io/holistics/anfra-hosting:$new" >/dev/null 2>&1; then
-            echo "anfra-hosting:$new is already published, nothing to do"
+          if [ "$(printf '%s\n' "$old" "$new" | sort -V | tail -1)" != "$new" ] || [ "$old" = "$new" ]; then
+            echo "Nothing newer than $old"
             exit 0
           fi
-          if ! docker manifest inspect "ghcr.io/holistics/anfra:$new" >/dev/null 2>&1; then
+          if docker manifest inspect "ghcr.io/holistics/anfra-hosting:$new" >/dev/null 2>&1; then
+            # An earlier run published the image but couldn't commit: only commit now.
+            echo "anfra-hosting:$new is already published, moving the files to it"
+            build=false
+          elif docker manifest inspect "ghcr.io/holistics/anfra:$new" >/dev/null 2>&1; then
+            build=true
+          else
             echo "::warning::ghcr.io/holistics/anfra:$new isn't published yet, the next run tries again"
             exit 0
           fi
           echo "old=$old" >> "$GITHUB_OUTPUT"
           echo "new=$new" >> "$GITHUB_OUTPUT"
+          echo "build=$build" >> "$GITHUB_OUTPUT"
 
       - name: Move to the new version
         if: steps.version.outputs.new
@@ -56,22 +63,22 @@ jobs:
           grep -q "^FROM ghcr.io/holistics/anfra-hosting:$NEW$" Dockerfile
 
       - name: Smoke test
-        if: steps.version.outputs.new
+        if: steps.version.outputs.build == 'true'
         run: test/smoke-test.sh
 
       - uses: docker/setup-qemu-action@c7c53464625b32c7a7e944ae62b3e17d2b600130 # v3.7.0
-        if: steps.version.outputs.new
+        if: steps.version.outputs.build == 'true'
       - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3.12.0
-        if: steps.version.outputs.new
+        if: steps.version.outputs.build == 'true'
       - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3.7.0
-        if: steps.version.outputs.new
+        if: steps.version.outputs.build == 'true'
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ github.token }}
 
       - name: Publish the image
-        if: steps.version.outputs.new
+        if: steps.version.outputs.build == 'true'
         uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6.19.2
         with:
           context: image
@@ -87,4 +94,6 @@ jobs:
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
           git commit -am "Move to anfra $NEW" -m "https://github.com/holistics/anfra/releases/tag/v$NEW"
+          # Someone may have pushed to main during the run.
+          git pull --rebase
           git push
