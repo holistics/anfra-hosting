@@ -44,6 +44,7 @@ See [Authentication](https://anfra.ai/docs/self-host/authentication) for each si
 | `heroku.yml` | Heroku's build config |
 | `image/` | The image's source: its `Dockerfile`, `start.sh`, and the login page backgrounds |
 | `test/` | `smoke-test.sh`, and the sample project it deploys |
+| `.github/workflows/follow-anfra.yml` | Publishes the image for each new anfra release |
 
 ## Change the image
 
@@ -56,4 +57,8 @@ See [Authentication](https://anfra.ai/docs/self-host/authentication) for each si
    docker push ghcr.io/holistics/anfra-hosting:0.24.0
    ```
 
-The tag is the anfra version the image is built on. To move to a new anfra version, change it in `image/Dockerfile`, in `Dockerfile`, and in `test/smoke-test.sh`.
+The tag is the anfra version the image is built on.
+
+## New anfra releases
+
+The [Follow anfra releases](.github/workflows/follow-anfra.yml) workflow runs once a day. When anfra has a new release, it moves the files to that version, runs the smoke test, publishes the image for amd64 and arm64, and then commits the new version. If the smoke test fails, nothing is published, and the failed run shows why. To check right away, run it from the **Actions** tab.

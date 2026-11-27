@@ -1,0 +1,90 @@
+# Once a day, look for a new anfra release. When there is one, build anfra-hosting on it, run the
+# smoke test, and publish the image. Only then commit the new version, so the Dockerfile that
+# projects download never points at an image that doesn't exist. Run it by hand from the Actions tab
+# to check right away.
+name: Follow anfra releases
+
+on:
+  schedule:
+    - cron: '17 3 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: write # commit the new version
+  packages: write # push ghcr.io/holistics/anfra-hosting
+
+concurrency:
+  group: follow-anfra
+
+jobs:
+  follow:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+
+      - name: Look for a new anfra release
+        id: version
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          # The latest release, never a release candidate.
+          new=$(gh release view -R holistics/anfra --json tagName --jq .tagName)
+          new=${new#v}
+          old=$(sed -n 's|^FROM ghcr.io/holistics/anfra:||p' image/Dockerfile)
+          echo "anfra's latest release is $new, anfra-hosting is on $old"
+          if docker manifest inspect "ghcr.io/holistics/anfra-hosting:$new" >/dev/null 2>&1; then
+            echo "anfra-hosting:$new is already published, nothing to do"
+            exit 0
+          fi
+          if ! docker manifest inspect "ghcr.io/holistics/anfra:$new" >/dev/null 2>&1; then
+            echo "::warning::ghcr.io/holistics/anfra:$new isn't published yet, the next run tries again"
+            exit 0
+          fi
+          echo "old=$old" >> "$GITHUB_OUTPUT"
+          echo "new=$new" >> "$GITHUB_OUTPUT"
+
+      - name: Move to the new version
+        if: steps.version.outputs.new
+        env:
+          OLD: ${{ steps.version.outputs.old }}
+          NEW: ${{ steps.version.outputs.new }}
+        run: |
+          sed -i -E "s#(ghcr\.io/holistics/anfra(-hosting)?):${OLD//./\\.}#\1:${NEW}#g" \
+            image/Dockerfile Dockerfile test/smoke-test.sh README.md
+          git diff --stat
+          grep -q "^FROM ghcr.io/holistics/anfra:$NEW$" image/Dockerfile
+          grep -q "^FROM ghcr.io/holistics/anfra-hosting:$NEW$" Dockerfile
+
+      - name: Smoke test
+        if: steps.version.outputs.new
+        run: test/smoke-test.sh
+
+      - uses: docker/setup-qemu-action@c7c53464625b32c7a7e944ae62b3e17d2b600130 # v3.7.0
+        if: steps.version.outputs.new
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3.12.0
+        if: steps.version.outputs.new
+      - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3.7.0
+        if: steps.version.outputs.new
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ github.token }}
+
+      - name: Publish the image
+        if: steps.version.outputs.new
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6.19.2
+        with:
+          context: image
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ghcr.io/holistics/anfra-hosting:${{ steps.version.outputs.new }}
+
+      - name: Commit the new version
+        if: steps.version.outputs.new
+        env:
+          NEW: ${{ steps.version.outputs.new }}
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git commit -am "Move to anfra $NEW" -m "https://github.com/holistics/anfra/releases/tag/v$NEW"
+          git push
